@@ -18,7 +18,8 @@ if (tg) { try { tg.ready(); tg.expand(); if (tg.disableVerticalSwipes) tg.disabl
 const buzz = (k, t) => { try { tg && tg.HapticFeedback && (k === 'i' ? tg.HapticFeedback.impactOccurred(t) : tg.HapticFeedback.notificationOccurred(t)); } catch (e) {} };
 
 const cv = document.getElementById('c'), cx = cv.getContext('2d');
-const LW = 360, LH = 640, G = 560, AX = 92, AY = 146, MAXPULL = 80, SHOTS = 10, GRAV = 900;
+const LW = 360, LH = 640, G = 560, AX = 92, AY = 146, MAXPULL = 80, MAXV = 368, SHOTS = 10, GRAV = 900;
+const STK = { x: 290, y: 586, R: 42 };
 const FONT = '"Trebuchet MS", system-ui, sans-serif';
 let sc = 1, ox = 0, oy = 0;
 function resize() {
@@ -69,17 +70,27 @@ cv.addEventListener('pointerdown', e => {
   }
   if (S.b || S.shots <= 0) return;
   try { cv.setPointerCapture(e.pointerId); } catch (er) {}
-  S.drag = { id: e.pointerId, ...clampPull(p) };
+  if (!S.stick && Math.hypot(p.x - STK.x, p.y - STK.y) < STK.R + 28) { S.stick = { id: e.pointerId, ...clampStick(p) }; return; }
+  if (!S.drag) S.drag = { id: e.pointerId, ...clampPull(p) };
 });
-cv.addEventListener('pointermove', e => { if (S.drag && S.drag.id === e.pointerId) S.drag = { id: e.pointerId, ...clampPull(pt(e)) }; });
+cv.addEventListener('pointermove', e => {
+  if (S.stick && S.stick.id === e.pointerId) S.stick = { id: e.pointerId, ...clampStick(pt(e)) };
+  else if (S.drag && S.drag.id === e.pointerId) S.drag = { id: e.pointerId, ...clampPull(pt(e)) };
+});
+function fire(vx, vy) { S.b = { x: AX, y: AY, vx, vy }; S.shots--; buzz('i', 'light'); }
 function release(e) {
+  if (S.stick && S.stick.id === e.pointerId) {
+    const dx = S.stick.dx, dy = S.stick.dy; S.stick = null;
+    if (!S.b && S.shots > 0 && Math.hypot(dx, dy) >= STK.R * .25) fire(dx * MAXV / STK.R, dy * MAXV / STK.R);
+    return;
+  }
   if (!S.drag || S.drag.id !== e.pointerId) return;
   const dx = S.drag.x - AX, dy = S.drag.y - AY, len = Math.hypot(dx, dy);
   S.drag = null;
   if (len < 14) return;
-  S.b = { x: AX, y: AY, vx: -dx * 4.6, vy: -dy * 4.6 };
-  S.shots--; buzz('i', 'light');
+  fire(-dx * 4.6, -dy * 4.6);
 }
+function clampStick(p) { let dx = p.x - STK.x, dy = p.y - STK.y; const l = Math.hypot(dx, dy); if (l > STK.R) { dx *= STK.R / l; dy *= STK.R / l; } return { dx, dy }; }
 cv.addEventListener('pointerup', release); cv.addEventListener('pointercancel', release);
 function clampPull(p) { let dx = p.x - AX, dy = p.y - AY; const l = Math.hypot(dx, dy); if (l > MAXPULL) { dx *= MAXPULL / l; dy *= MAXPULL / l; } return { x: AX + dx, y: AY + dy }; }
 
@@ -188,9 +199,8 @@ function drawScene() {
   cx.fillStyle = '#4a3326'; cx.beginPath(); cx.arc(73, 108, 8.6, Math.PI, 2 * Math.PI); cx.fill();
 }
 
-function trajectory() {
-  const dx = S.drag.x - AX, dy = S.drag.y - AY;
-  let x = AX, y = AY, vx = -dx * 4.6, vy = -dy * 4.6; const h = .045;
+function trajectory(vx, vy) {
+  let x = AX, y = AY; const h = .045;
   cx.fillStyle = 'rgba(255,255,255,.75)';
   for (let i = 0; i < 16; i++) {
     for (let j = 0; j < 2; j++) { vx += S.wind * h; vy += GRAV * h; x += vx * h; y += vy * h; }
@@ -226,6 +236,16 @@ function drawOver() {
   if (canSend()) { cx.fillStyle = '#3d8fd1'; rr(BTN2.x, BTN2.y, BTN2.w, BTN2.h, 14); text('Отправить счёт боту', 180, BTN2.y + 29, 16, '#fff'); }
 }
 
+function drawStick() {
+  const idle = S.b || S.shots <= 0, kx = STK.x + (S.stick ? S.stick.dx : 0), ky = STK.y + (S.stick ? S.stick.dy : 0);
+  cx.globalAlpha = idle ? .35 : 1;
+  cx.fillStyle = 'rgba(255,255,255,.12)'; cx.strokeStyle = 'rgba(255,255,255,.4)'; cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(STK.x, STK.y, STK.R, 0, 7); cx.fill(); cx.stroke();
+  if (S.stick) { cx.strokeStyle = 'rgba(255,217,138,.8)'; cx.lineWidth = 3; cx.lineCap = 'round'; cx.beginPath(); cx.moveTo(STK.x, STK.y); cx.lineTo(kx, ky); cx.stroke(); }
+  cx.fillStyle = S.stick ? '#ffd98a' : 'rgba(255,217,138,.75)'; circ(kx, ky, 17);
+  cx.globalAlpha = 1;
+}
+
 function draw(now) {
   cx.setTransform(1, 0, 0, 1, 0, 0); cx.fillStyle = '#15173f'; cx.fillRect(0, 0, cv.width, cv.height);
   cx.setTransform(sc, 0, 0, sc, ox, oy); cx.save(); cx.beginPath(); cx.rect(0, 0, LW, LH); cx.clip();
@@ -235,15 +255,19 @@ function draw(now) {
   if (S.drag) {
     cx.strokeStyle = '#e8b4b8'; cx.lineWidth = 2.5; cx.lineCap = 'round';
     cx.beginPath(); cx.moveTo(AX - 9, AY + 8); cx.lineTo(S.drag.x, S.drag.y); cx.lineTo(AX + 9, AY + 8); cx.stroke();
-    trajectory(); drawBalloon(S.drag.x, S.drag.y, Math.atan2(-(S.drag.y - AY), -(S.drag.x - AX)) + Math.PI / 2);
-  } else if (!S.b && S.shots > 0) drawBalloon(AX, AY, .15 * Math.sin(now / 400));
+    trajectory(-(S.drag.x - AX) * 4.6, -(S.drag.y - AY) * 4.6); drawBalloon(S.drag.x, S.drag.y, Math.atan2(-(S.drag.y - AY), -(S.drag.x - AX)) + Math.PI / 2);
+  } else if (!S.b && S.shots > 0) {
+    if (S.stick && Math.hypot(S.stick.dx, S.stick.dy) >= STK.R * .25) trajectory(S.stick.dx * MAXV / STK.R, S.stick.dy * MAXV / STK.R);
+    drawBalloon(AX, AY, .15 * Math.sin(now / 400));
+  }
   if (S.b) drawBalloon(S.b.x, S.b.y, Math.atan2(S.b.vy, S.b.vx) + Math.PI / 2);
   for (const q of S.parts) { cx.fillStyle = 'rgba(' + q.col + ',' + Math.min(1, q.life * 2) + ')'; circ(q.x, q.y, 2.4); }
   for (const t of S.texts) { cx.globalAlpha = Math.min(1, t.life * 2); text(t.s, Math.max(70, Math.min(LW - 70, t.x)), t.y, 15, t.c); cx.globalAlpha = 1; }
   drawHUD();
+  if (!S.over) drawStick();
   if (S.score === 0 && S.shots === SHOTS && !S.b) {
-    cx.globalAlpha = S.drag ? .25 : .95;
-    text('Оттяни шарик вниз и влево,', 215, 250, 14, '#fff', 'center', 'normal'); text('отпусти и попади в прохожего', 215, 270, 14, '#fff', 'center', 'normal');
+    cx.globalAlpha = (S.drag || S.stick) ? .25 : .95;
+    text('Наклони стик справа внизу', 215, 250, 14, '#fff', 'center', 'normal'); text('и отпусти: шарик полетит туда же', 215, 270, 14, '#fff', 'center', 'normal');
     cx.globalAlpha = 1;
   }
   if (S.over) drawOver();
